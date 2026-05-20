@@ -104,12 +104,11 @@ $BrowserUrl = "http://" + $BindHost + ":" + $BindPort
 # were not captured during the initial matterport-dl download run.
 # JS/CSS chunks are lazy-loaded code-split bundles; the standard downloader only
 # grabs named chunks. Static files like atlas.png are also sometimes missed.
-function Ensure-ChunkFiles {
+function Sync-ChunkFiles {
     param([string]$ModelDir)
 
     $jsDir    = Join-Path $ModelDir "js"
     $cssDir   = Join-Path $ModelDir "css"
-    $imgDir   = Join-Path $ModelDir "images"
     $indexFile   = Join-Path $ModelDir "index.html"
     $runtimeFile = Join-Path $jsDir "runtime~showcase.js"
 
@@ -174,7 +173,7 @@ function Ensure-ChunkFiles {
     # Helper: download a URL to a destination path, retrying up to 3 times on
     # transient failures. Returns $true on success, $false if all attempts fail
     # (e.g. genuine CDN 403/404).
-    function Fetch-WithRetry {
+    function Invoke-DownloadWithRetry {
         param([string]$Url, [string]$Dest, [string]$Dir)
         if ($Dir -and -not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
         for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -199,14 +198,14 @@ function Ensure-ChunkFiles {
     $ok = 0; $fail = 0
 
     foreach ($id in $missingJs) {
-        if (Fetch-WithRetry -Url "$cdnBase/js/$id.js" -Dest (Join-Path $jsDir "$id.js")) { $ok++ } else { $fail++ }
+        if (Invoke-DownloadWithRetry -Url "$cdnBase/js/$id.js" -Dest (Join-Path $jsDir "$id.js")) { $ok++ } else { $fail++ }
     }
     foreach ($id in $missingCss) {
-        if (Fetch-WithRetry -Url "$cdnBase/css/$id.css" -Dest (Join-Path $cssDir "$id.css")) { $ok++ } else { $fail++ }
+        if (Invoke-DownloadWithRetry -Url "$cdnBase/css/$id.css" -Dest (Join-Path $cssDir "$id.css")) { $ok++ } else { $fail++ }
     }
     foreach ($rel in $missingStatic) {
         $dest = Join-Path $ModelDir $rel
-        if (Fetch-WithRetry -Url "$cdnBase/$($rel -replace '\\','/')" -Dest $dest -Dir (Split-Path $dest -Parent)) { $ok++ } else { $fail++ }
+        if (Invoke-DownloadWithRetry -Url "$cdnBase/$($rel -replace '\\','/')" -Dest $dest -Dir (Split-Path $dest -Parent)) { $ok++ } else { $fail++ }
     }
     Write-Host "    Downloaded: $ok  Unavailable (CDN blocked/removed): $fail"
 }
@@ -227,7 +226,7 @@ foreach ($model in $models) {
     # Ensure all lazy-loaded webpack chunk files are present in the source download folder.
     # This fetches any numeric chunks (e.g. 7941.js) that run.py missed during the download.
     Write-Host "  Checking for missing JS chunks..."
-    Ensure-ChunkFiles -ModelDir $modelDir
+    Sync-ChunkFiles -ModelDir $modelDir
 
     # Copy exe + package/ into bundle root
     Copy-Item -Path (Join-Path $ExeSource "*") -Destination $bundleDir -Recurse
