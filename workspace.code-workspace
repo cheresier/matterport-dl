@@ -1,5 +1,9 @@
 {
-	"folders": [],
+	"folders": [
+		{
+			"path": "."
+		}
+	],
 	"settings": {
 		"python.analysis.typeCheckingMode": "standard",
 		"ruff.lineLength": 9999,
