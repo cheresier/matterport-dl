@@ -38,6 +38,6 @@ This also:
 ## Step 3 — Report the result
 
 When packaging completes, report:
-- The full path to the distributable bundle: `d:\source\repos\matterport-dl\bundles\${input:modelId}\`
-- That recipients can share the entire folder and double-click `Launch.bat` to view offline
+- The full path to the distributable zip: `d:\source\repos\matterport-dl\bundles\${input:modelId}.zip`
+- That recipients extract the zip and double-click `Launch.bat` to view offline
 - Any errors or warnings encountered during download or packaging

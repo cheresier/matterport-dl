@@ -2,10 +2,10 @@
 .SYNOPSIS
     Packages downloaded Matterport models into self-contained distributable bundles.
 .DESCRIPTION
-    Builds matterport-dl.exe once using PyInstaller, then creates a bundle folder per
-    model under .\bundles\. Each bundle is self-contained: the recipient double-clicks
-    Launch.bat to start the server and open the tour in their default browser.
-    No Python installation required on the recipient's PC.
+    Builds matterport-dl.exe once using PyInstaller, then creates a self-contained zip
+    archive per model under .\bundles\. Each zip contains the exe, support files, and
+    all model data. The recipient extracts the zip and double-clicks Launch.bat to start
+    the server and open the tour in their default browser. No Python required.
 .PARAMETER ModelId
     Optional. Package only this model ID. Omit to package all models in .\downloads\.
 .PARAMETER BindHost
@@ -264,6 +264,16 @@ foreach ($model in $models) {
     )
 
     Write-Host "  -> $bundleDir"
+
+    # Zip the bundle and remove the staging folder.
+    # The zip contains a top-level folder named after the model ID so
+    # the recipient can extract anywhere and keep things organised.
+    $zipPath = "$bundleDir.zip"
+    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+    Write-Host "  Compressing to $zipPath ..."
+    Compress-Archive -Path $bundleDir -DestinationPath $zipPath
+    Remove-Item $bundleDir -Recurse -Force
+    Write-Host "  -> $zipPath"
 }
 
 # Clean up PyInstaller temporaries
@@ -272,4 +282,4 @@ if (Test-Path $BuildDir) { Remove-Item $BuildDir -Recurse -Force }
 
 Write-Host ""
 Write-Host "Done. Bundles are in: $BundlesDir"
-Write-Host "Share the entire MODEL_ID subfolder. Recipient double-clicks Launch.bat."
+Write-Host "Share the MODEL_ID.zip file. Recipient extracts it and double-clicks Launch.bat."
