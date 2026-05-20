@@ -1,5 +1,5 @@
 ---
-mode: agent
+agent: agent
 description: Download a Matterport 3D tour by model ID and package it as a standalone Windows bundle
 tools:
   - run_in_terminal
