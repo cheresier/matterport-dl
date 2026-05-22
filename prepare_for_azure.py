@@ -182,7 +182,7 @@ def build_staging(model_id: str) -> pathlib.Path:
         dest_file.parent.mkdir(parents=True, exist_ok=True)
 
         if dest_rel == pathlib.Path("index.html"):
-            _write_patched_index(f, dest_file)
+            _write_patched_index(f, dest_file, model_id)
         elif dest_name.startswith("graph_") and dest_name.endswith(".json"):
             _write_fixed_json(f, dest_file)
         else:
@@ -207,15 +207,14 @@ def _write_fixed_json(src_file: pathlib.Path, dest_file: pathlib.Path) -> None:
     dest_file.write_text(fixed, encoding="utf-8")
 
 
-def _write_patched_index(src_file: pathlib.Path, dest_file: pathlib.Path) -> None:
+def _write_patched_index(src_file: pathlib.Path, dest_file: pathlib.Path, model_id: str) -> None:
     """Patch index.modified.html for subfolder static hosting and save as index.html."""
     text = src_file.read_text(encoding="utf-8")
 
-    # Leave _ProxyBase as window.location.origin (origin only, no path).
-    # The POST_INTERCEPTOR patches window._replaceHost to handle:
-    #  - URLs already at origin+subfolder → no-op
-    #  - URLs at origin without subfolder (built via _ProxyBase+path) → insert subfolder
-    #  - Foreign URLs → replace host then insert subfolder
+    # Insert <base href> so relative URLs resolve from the model subfolder
+    # even when the URL lacks a trailing slash (e.g. /nXa2VtHUZYa?m=...).
+    base_tag = f'<base href="/{model_id}/">'
+    text = text.replace("<head>", f"<head>{base_tag}", 1)
 
     # Inject shim immediately after JSNetProxy so it wraps _replaceHost
     # and fetch before the showcase JS runs (execution order matters).
