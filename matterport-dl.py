@@ -1450,6 +1450,10 @@ GRAPH_DATA_REQ = {
     "GetRooms": "?operationName=GetRooms&variables=%7B%22modelId%22%3A%22[MATTERPORT_MODEL_ID]%22%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%223743bbb80ad617297c8e8c943499144b8ff20840a5c1fd48e5d3d131d915ed3a%22%7D%7D",
     "GetFloors": "?operationName=GetFloors&variables=%7B%22modelId%22%3A%22[MATTERPORT_MODEL_ID]%22%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%225df6b8c235ad84bba1032135922354e8850320ce8780315993722778d9835f15%22%7D%7D",
     "GetModelOptions": "?operationName=GetModelOptions&variables=%7B%22modelId%22%3A%22[MATTERPORT_MODEL_ID]%22%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%2248765f4d53c1700521382c03034c1b67e63b9bdc6cccdc6c4e853620cd9c74c7%22%7D%7D",
+    # GetLayers is required by the CWF engine (readLayersForView) to load the view's layer configuration.
+    # Variables use viewId (same value as modelId for standard models).
+    # APQ hash computed from graph_posts/GetLayers.json query document.
+    "GetLayers": "?operationName=GetLayers&variables=%7B%22viewId%22%3A%22[MATTERPORT_MODEL_ID]%22%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22a7e866f0aca615ea0c22cb7ab2881ead85955eda5cad9bf29ddf3db783621ff6%22%7D%7D",
 }
 OUR_SESSION: requests.AsyncSession
 MAX_TASKS_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_TASKS)

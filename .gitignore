@@ -5,3 +5,6 @@ defaults.json
 venv/
 __pycache__/
 bundles/
+_azure_staging/
+_fix_expiry.py
+_fetch_graph.py
