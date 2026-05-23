@@ -47,7 +47,15 @@ STAGING_BASE = SCRIPT_DIR / "_azure_staging"
 # Replace with a far-future date so the static-hosted viewer never
 # stalls on the [expiring-resource] refresh loop.
 FAR_FUTURE_DATE = "2099-12-31T23:59:59Z"
+FAR_FUTURE_EPOCH = 4102444799  # 2099-12-31T23:59:59Z as Unix timestamp
+# Plain JSON:   "validUntil":"2026-05-20T20:55:05Z"
 _VALID_UNTIL_RE = re.compile(r'"validUntil"\s*:\s*"[^"]*"')
+# Escaped JSON inside JS string literals: \"validUntil\":\"DATE\"
+_VALID_UNTIL_ESC_RE = re.compile(r'\\"validUntil\\"\s*:\s*\\"[^"]*\\"')
+
+_EXPIRES_RE = re.compile(r'"expires"\s*:\s*\d+')
+_EXPIRES_ESC_RE = re.compile(r'\\"expires\\"\s*:\s*\d+')
+
 _VALID_UNTIL_ISO = re.compile(
     r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z'
 )
@@ -60,7 +68,20 @@ def _fix_valid_until(text: str) -> tuple[str, int]:
     """
     # Plain JSON: "validUntil":"2026-05-20T20:55:05Z"
     fixed, n1 = _VALID_UNTIL_RE.subn(f'"validUntil":"{FAR_FUTURE_DATE}"', text)
-    return fixed, n1
+    # Escaped JSON (inside JS string): \"validUntil\":\"DATE\"
+    fixed, n2 = _VALID_UNTIL_ESC_RE.subn(
+        f'\\"validUntil\\":\\"{FAR_FUTURE_DATE}\\"', fixed
+    )
+    return fixed, n1 + n2
+
+
+def _fix_expires(text: str) -> tuple[str, int]:
+    """Replace "expires":TIMESTAMP with a far-future epoch."""
+    fixed, n1 = _EXPIRES_RE.subn(f'"expires":{FAR_FUTURE_EPOCH}', text)
+    fixed, n2 = _EXPIRES_ESC_RE.subn(
+        f'\\"expires\\":{FAR_FUTURE_EPOCH}', fixed
+    )
+    return fixed, n1 + n2
 
 
 # Files that serve no purpose in static hosting
@@ -117,7 +138,14 @@ POST_INTERCEPTOR = (
     "        return new Response('{\"data\":{}}',\n"
     "          {status:200, headers:{'Content-Type':'application/json'}});\n"
     "      }\n"
-    "      return r;\n"
+    "      return r.clone().json().then(function(j) {\n"
+    "        if (j.errors && !j.data) {\n"
+    "          console.warn('[shim] graph error response, returning empty data for:', op, j.errors);\n"
+    "          return new Response('{\"data\":{}}',\n"
+    "            {status:200, headers:{'Content-Type':'application/json'}});\n"
+    "        }\n"
+    "        return r;\n"
+    "      });\n"
     "    });\n"
     "  }\n"
     "  window.fetch = function (url, opts) {\n"
@@ -185,6 +213,9 @@ def build_staging(model_id: str) -> pathlib.Path:
             _write_patched_index(f, dest_file, model_id)
         elif dest_name.startswith("graph_") and dest_name.endswith(".json"):
             _write_fixed_json(f, dest_file)
+        elif (dest_rel.parent == pathlib.Path("api/player/models") / model_id
+              and dest_name.startswith("files")):
+            _write_fixed_files_manifest(f, dest_file)
         else:
             shutil.copy2(f, dest_file)
 
@@ -204,6 +235,15 @@ def _write_fixed_json(src_file: pathlib.Path, dest_file: pathlib.Path) -> None:
     fixed, n = _fix_valid_until(text)
     if n:
         print(f"  {dest_file.name}: fixed {n} validUntil dates")
+    dest_file.write_text(fixed, encoding="utf-8")
+
+
+def _write_fixed_files_manifest(src_file: pathlib.Path, dest_file: pathlib.Path) -> None:
+    """Copy a files manifest, fixing the expires epoch timestamp."""
+    text = src_file.read_text(encoding="utf-8")
+    fixed, n = _fix_expires(text)
+    if n:
+        print(f"  {dest_file.name}: fixed {n} expires timestamps")
     dest_file.write_text(fixed, encoding="utf-8")
 
 
@@ -342,29 +382,49 @@ def get_static_website_url() -> str:
 def upload(staging: pathlib.Path, model_id: str, key: str, pattern: str = "") -> str:
     destination = f"$web/{model_id}"
     if pattern:
-        file_count = sum(1 for _ in staging.rglob(pattern))
+        # Use rglob to find matching files (works across subdirectories).
+        # az upload-batch --pattern uses fnmatch which does NOT match across
+        # path separators, so we upload individual files instead.
+        matches = [f for f in staging.rglob(pattern) if f.is_file()]
+        file_count = len(matches)
         print(f"Uploading {file_count} file(s) matching '{pattern}' to {STORAGE_ACCOUNT}/{destination} …")
+        t0 = time.monotonic()
+        for f in matches:
+            rel = f.relative_to(staging).as_posix()
+            blob_name = f"{model_id}/{rel}"
+            result = subprocess.run(
+                [_AZ_EXE, "storage", "blob", "upload",
+                 "--account-name", STORAGE_ACCOUNT,
+                 "--account-key", key,
+                 "--container-name", "$web",
+                 "--file", str(f),
+                 "--name", blob_name,
+                 "--overwrite", "true",
+                 "--output", "none"],
+            )
+            if result.returncode != 0:
+                print(f"  WARN: failed to upload {rel}")
+        elapsed = time.monotonic() - t0
     else:
         file_count = sum(1 for _ in staging.rglob("*") if _.is_file())
         print(f"Uploading {file_count} files to {STORAGE_ACCOUNT}/{destination} …")
 
-    cmd = [
-        _AZ_EXE, "storage", "blob", "upload-batch",
-        "--account-name", STORAGE_ACCOUNT,
-        "--account-key", key,
-        "--destination", destination,
-        "--source", str(staging),
-        "--overwrite", "true",
-        "--output", "none",
-    ]
-    if pattern:
-        cmd += ["--pattern", pattern]
-    t0 = time.monotonic()
-    result = subprocess.run(cmd)
-    elapsed = time.monotonic() - t0
+        cmd = [
+            _AZ_EXE, "storage", "blob", "upload-batch",
+            "--account-name", STORAGE_ACCOUNT,
+            "--account-key", key,
+            "--destination", destination,
+            "--source", str(staging),
+            "--overwrite", "true",
+            "--output", "none",
+        ]
+        t0 = time.monotonic()
+        result = subprocess.run(cmd)
+        elapsed = time.monotonic() - t0
 
-    if result.returncode != 0:
-        sys.exit("Upload failed.")
+        if result.returncode != 0:
+            sys.exit("Upload failed.")
+
     print(f"Upload complete ({elapsed:.0f}s).")
 
     base_url = get_static_website_url()
