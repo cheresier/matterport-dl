@@ -27,6 +27,8 @@ import subprocess
 import pathlib
 import time
 
+from curl_cffi import requests as _curl_requests
+
 # Azure CLI on Windows is az.cmd, not az — shutil.which resolves via PATHEXT
 _AZ_EXE = shutil.which("az")
 if _AZ_EXE is None:
@@ -172,6 +174,115 @@ POST_INTERCEPTOR = (
     "</script>"
 )
 
+# ── Chunk backfill ────────────────────────────────────────────────────────────
+
+def _backfill_chunks(model_dir: pathlib.Path) -> None:
+    """Download missing lazy-loaded JS/CSS chunks and static files from CDN.
+
+    The matterport-dl downloader captures named webpack chunks but can miss
+    numbered code-split chunks that are only lazy-loaded at runtime.  This
+    function parses runtime~showcase.js to discover all referenced chunk IDs
+    and fetches any that are absent from the download folder.
+    """
+    js_dir = model_dir / "js"
+    css_dir = model_dir / "css"
+    runtime_file = js_dir / "runtime~showcase.js"
+    index_file = model_dir / "index.html"
+
+    if not runtime_file.exists() or not index_file.exists():
+        return
+
+    # Derive CDN base URL from <base href> in the original index.html
+    index_text = index_file.read_text(encoding="utf-8", errors="ignore")
+    m = re.search(r'base href="([^"]+)"', index_text)
+    if not m:
+        return
+    cdn_base = m.group(1).rstrip("/")
+
+    runtime = runtime_file.read_text(encoding="utf-8", errors="ignore")
+
+    # ── JS chunks ─────────────────────────────────────────────────────────
+    # Named chunk IDs already have human-readable filenames (e.g. "core.js")
+    named_js = {mat.group(1) for mat in re.finditer(r'(\d+):"[a-z]', runtime)}
+
+    # All JS chunk IDs referenced by lazy-load calls: X.e(N)
+    all_js: set[str] = set()
+    for f in js_dir.glob("*.js"):
+        content = f.read_text(encoding="utf-8", errors="ignore")
+        for mat in re.finditer(r'\b[a-zA-Z_$]{1,2}\.e\((\d+)\)', content):
+            all_js.add(mat.group(1))
+
+    missing_js = [
+        cid for cid in sorted(all_js - named_js, key=int)
+        if not (js_dir / f"{cid}.js").exists()
+    ]
+
+    # ── CSS chunks ────────────────────────────────────────────────────────
+    missing_css: list[str] = []
+    css_avail = re.search(r'&&(\{(?:\d+:1,?)+\})\[', runtime)
+    if css_avail:
+        css_ids = {mat.group(1) for mat in re.finditer(r'(\d+):1', css_avail.group(1))}
+        css_named_match = re.search(r'miniCssF[^{]*\{([^}]+)\}', runtime)
+        css_named = (
+            {mat.group(1) for mat in re.finditer(r'(\d+):"', css_named_match.group(1))}
+            if css_named_match else set()
+        )
+        missing_css = [
+            cid for cid in sorted(css_ids - css_named, key=int)
+            if not (css_dir / f"{cid}.css").exists()
+        ]
+
+    # ── Static files ──────────────────────────────────────────────────────
+    static_files = ["images/atlas.png"]
+    missing_static = [s for s in static_files if not (model_dir / s).exists()]
+
+    total = len(missing_js) + len(missing_css) + len(missing_static)
+    if total == 0:
+        print("  All JS/CSS chunks and static files present.")
+        return
+
+    print(f"  Fetching missing files: {len(missing_js)} JS, {len(missing_css)} CSS, {len(missing_static)} static …")
+    ok = fail = 0
+
+    def _download(url: str, dest: pathlib.Path) -> bool:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        for attempt in range(3):
+            try:
+                r = _curl_requests.get(url, impersonate="chrome", timeout=30)
+                if r.status_code != 200:
+                    return False
+                dest.write_bytes(r.content)
+                return True
+            except Exception:
+                if dest.exists():
+                    dest.unlink()
+                if attempt < 2:
+                    time.sleep(0.5)
+        return False
+
+    for cid in missing_js:
+        if _download(f"{cdn_base}/js/{cid}.js", js_dir / f"{cid}.js"):
+            ok += 1
+        else:
+            fail += 1
+
+    for cid in missing_css:
+        css_dir.mkdir(parents=True, exist_ok=True)
+        if _download(f"{cdn_base}/css/{cid}.css", css_dir / f"{cid}.css"):
+            ok += 1
+        else:
+            fail += 1
+
+    for rel in missing_static:
+        dest = model_dir / rel
+        if _download(f"{cdn_base}/{rel}", dest):
+            ok += 1
+        else:
+            fail += 1
+
+    print(f"  Downloaded: {ok}  Unavailable: {fail}")
+
+
 # ── Staging ───────────────────────────────────────────────────────────────────
 
 def build_staging(model_id: str) -> pathlib.Path:
@@ -180,6 +291,10 @@ def build_staging(model_id: str) -> pathlib.Path:
 
     if not src.exists():
         sys.exit(f"Error: model folder not found: {src}")
+
+    # Backfill any missing lazy-loaded chunks before staging
+    print("Checking for missing JS/CSS chunks …")
+    _backfill_chunks(src)
 
     if dst.exists():
         shutil.rmtree(dst)
