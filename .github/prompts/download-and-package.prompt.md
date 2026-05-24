@@ -1,13 +1,11 @@
 ---
-agent: agent
 description: Download a Matterport 3D tour by model ID and publish it online via Azure Blob Storage
-tools:
-  - run_in_terminal
 ---
 
 Download and publish the Matterport model with ID **${input:modelId:Matterport model ID (e.g. nXa2VtHUZYa)}**.
 
 The repo is at `d:\source\repos\matterport-dl`. All commands must be run from that directory.
+Both commands are long-running (several minutes each). Use `mode=sync` with a generous timeout (e.g. 600000ms for the download, 1200000ms for the upload) so they can complete.
 
 ## Step 1 — Download the model
 
@@ -19,6 +17,7 @@ cd d:\source\repos\matterport-dl
 ```
 
 The download is complete when the script exits with code 0. It may take several minutes. Do not proceed to Step 2 until the command exits with code 0.
+If the command times out and moves to the background, use get_terminal_output to poll for completion. Do NOT start Step 2 until Step 1 has fully exited.
 
 ## Step 2 — Prepare and upload to Azure
 
@@ -30,9 +29,9 @@ cd d:\source\repos\matterport-dl
 ```
 
 The script checks for an existing Azure session for the personal tenant and only prompts for
-device-code login if needed. If it does prompt, follow the on-screen instructions: open a
-browser, go to https://microsoft.com/devicelogin, and enter the code shown in the terminal.
-Wait for the upload to finish — it will print a URL when done.
+device-code login if needed. If it does prompt, tell the user to follow the on-screen instructions
+in the terminal: open a browser, go to https://microsoft.com/devicelogin, and enter the code shown.
+Wait for the upload to finish — it will print a URL when done. The upload can take 5-20 minutes for large models.
 
 ## Step 3 — Report the result
 
