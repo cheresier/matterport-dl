@@ -211,6 +211,11 @@ def _backfill_chunks(model_dir: pathlib.Path) -> None:
         content = f.read_text(encoding="utf-8", errors="ignore")
         for mat in re.finditer(r'\b[a-zA-Z_$]{1,2}\.e\((\d+)\)', content):
             all_js.add(mat.group(1))
+        # Also detect webpack context-module chunks: "./file":[moduleId, chunkId]
+        # These are lazy-loaded via i.e(t[1]) where t is a variable, so the
+        # numeric .e(N) pattern above won't catch them.
+        for mat in re.finditer(r'"\.\/[^"]+"\s*:\s*\[\d+\s*,\s*(\d+)\]', content):
+            all_js.add(mat.group(1))
 
     missing_js = [
         cid for cid in sorted(all_js - named_js, key=int)

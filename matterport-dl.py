@@ -641,6 +641,30 @@ async def downloadAssets(base, base_page_text):
         shouldExist = True
         toDownload.append(AsyncDownloadItem(type, shouldExist, f"{base}{asset}", local_file))
     await AsyncArrayDownload(toDownload)
+
+    # Second pass: scan downloaded JS files for webpack context-module chunks.
+    # These are lazy-loaded chunks (language files, logos, etc.) embedded in
+    # patterns like: "./cwf_en-US.yaml":[42622,2622]  where the second number
+    # is the chunk ID.  The runtime maps chunk IDs to js/{name_or_id}.js but
+    # the named dict only covers named chunks; unnamed ones use the number.
+    _CONTEXT_MODULE_RE = re.compile(r'"\.\/[^"]+"\s*:\s*\[\d+\s*,\s*(\d+)\]')
+    assets_set = set(assets)
+    lazy_chunks: list[AsyncDownloadItem] = []
+    for js_file in [a for a in assets if a.startswith("js/") and a.endswith(".js")]:
+        if not os.path.exists(js_file):
+            continue
+        with open(js_file, "r", encoding="UTF-8") as f:
+            js_text = f.read()
+        for m in _CONTEXT_MODULE_RE.finditer(js_text):
+            chunk_id = m.group(1)
+            chunk_file = f"js/{chunk_id}.js"
+            if chunk_file not in assets_set:
+                assets_set.add(chunk_file)
+                lazy_chunks.append(AsyncDownloadItem("LAZY_CHUNK_JS", False, f"{base}{chunk_file}", chunk_file))
+    if lazy_chunks:
+        consoleDebugLog(f"Discovered {len(lazy_chunks)} lazy-loaded webpack chunks, downloading...")
+        await AsyncArrayDownload(lazy_chunks)
+
     if react_vendor_filename and os.path.exists(react_vendor_filename):
         reactCont = ""
         with open(react_vendor_filename, "r", encoding="UTF-8") as f:
